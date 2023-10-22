@@ -42,9 +42,9 @@ impl Default for Body {
             position: Vec2::ZERO,
             velocity: Vec2::ZERO,
             origin: Vec2::ZERO,
-            angular_velocity: 0.0,
-            air_friction: 0.95,
-            angular_friction: 0.95,
+            angular_velocity: 0.1,
+            air_friction: 0.92,
+            angular_friction: 0.9,
             rotation: 0.0,
             mass: 10.0,
         }
@@ -69,7 +69,6 @@ impl Body {
 
     pub fn apply_displacement(&mut self, delta: ForceTorque) {
         let vel = delta.force / self.mass;
-        println!("vel {:?}", vel);
         self.velocity += vel;
         self.angular_velocity += delta.torque / self.moment_of_inertia();
     }
@@ -125,7 +124,10 @@ fn spawn_body(commands: &mut Commands, position: Vec2, shape: Shape) {
         position,
         ..default()
     };
-    let ft = body.get_displacement(Vec2::ZERO, Vec2 { x: 0.0, y: 20.0 });
+    let ft = body.get_displacement(
+        body.position - Vec2 { x: 10.0, y: 0.0 },
+        Vec2 { x: 0.0, y: 10.0 },
+    );
     match body.shape {
         Shape::Circle { radius } => println!("new circle({})", radius),
         Shape::Rectangle { width, height } => println!("new rectangle({}, {})", width, height),
@@ -158,10 +160,10 @@ pub fn spawn_bodies(mut commands: Commands) {
 
 pub fn apply_velocities(mut body_query: Query<&mut Body>) {
     for mut body in body_query.iter_mut() {
-        body.angular_velocity *= PHYSICS_DT / body.angular_friction;
+        body.angular_velocity *= body.angular_friction.powf(PHYSICS_DT);
         body.rotation += body.angular_velocity * PHYSICS_DT;
 
-        // body.velocity = body.velocity * PHYSICS_DT / body.air_friction;
+        body.velocity = body.velocity * body.air_friction.powf(PHYSICS_DT);
         body.position = body.position + body.velocity * PHYSICS_DT;
     }
 }
@@ -170,6 +172,6 @@ pub fn update_transforms(mut body_query: Query<(&Body, &mut Transform)>) {
     for (body, mut transform) in body_query.iter_mut() {
         transform.translation.x = body.position.x;
         transform.translation.y = body.position.y;
-        transform.rotate_z(body.rotation);
+        transform.rotation = Quat::from_rotation_z(body.rotation);
     }
 }
