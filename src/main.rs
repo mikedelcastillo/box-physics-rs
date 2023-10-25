@@ -8,7 +8,7 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_inspector_egui::{prelude::ReflectInspectorOptions, InspectorOptions};
 use rand::random;
 
-pub const PHYSICS_ITERS: u8 = 100;
+pub const PHYSICS_ITERS: u8 = 4;
 pub const PHYSICS_DT: f32 = 1.0 / 20.0;
 pub const PHYSICS_ITER_DT: f32 = PHYSICS_DT / (PHYSICS_ITERS as f32);
 
@@ -23,7 +23,7 @@ fn main() {
         .register_type::<Point>()
         .register_type::<Constraint>()
         .add_systems(Startup, (spawn_entities).chain())
-        .add_systems(Update, (compute_boundaries, compute_constraints, update_positions).chain()
+        .add_systems(Update, (solve, update_positions).chain()
             .run_if(on_timer(Duration::from_millis((1000.0 * PHYSICS_DT) as u64))))
         .add_systems(Update, (debug_points, debug_constraints))
         .run();
@@ -57,7 +57,7 @@ pub struct Constraint {
 pub fn make_point(position: Vec2) -> impl Bundle {
     Point {
         position,
-        past_position: Vec2::ZERO,
+        past_position: position.clone(),
         friction: 1.0,
         radius: 10.0,
         mass: 10.0,
@@ -103,9 +103,20 @@ macro_rules! constraint_points_mut {
     };
 }
 
-pub fn compute_boundaries(
+pub fn solve(
     mut point_query: Query<&mut Point>,
+    constraint_query: Query<&Constraint>,
     window_query: Query<&Window, With<PrimaryWindow>>,
+) {
+    for _ in 0..PHYSICS_ITERS {
+        compute_boundaries(&mut point_query, &window_query);
+        compute_constraints(&mut point_query, &constraint_query);
+    }
+}
+
+pub fn compute_boundaries(
+    point_query: &mut Query<&mut Point>,
+    window_query: &Query<&Window, With<PrimaryWindow>>,
 ) {
     let window = window_query.get_single();
     if let Ok(window) = window {
@@ -139,25 +150,23 @@ pub fn compute_boundaries(
 }
 
 pub fn compute_constraints(
-    mut point_query: Query<&mut Point>,
-    constraint_query: Query<&Constraint>,
+    point_query: &mut  Query<&mut Point>,
+    constraint_query: &Query<&Constraint>,
 ) {
-    for _ in 0..PHYSICS_ITERS {
-        for constraint in constraint_query.iter() {
-            constraint_points_mut!(constraint, point_query, point_a, point_b, {
-                let pos_a = point_a.position;
-                let pos_b = point_b.position;
-                let delta = pos_b - pos_a;
-                let distance = pos_a.distance(pos_b);
-                let diff = (constraint.length - distance) / distance * constraint.strength * 2.0;
-                let offset = delta * diff * 0.5;
-                let effect_a = (1.0 / point_a.mass) / ((1.0 / point_a.mass) + (1.0 / point_b.mass));
-                let effect_b = 1.0 - effect_a;
+    for constraint in constraint_query.iter() {
+        constraint_points_mut!(constraint, point_query, point_a, point_b, {
+            let pos_a = point_a.position;
+            let pos_b = point_b.position;
+            let delta = pos_b - pos_a;
+            let distance = pos_a.distance(pos_b);
+            let diff = (constraint.length - distance) / distance * constraint.strength * 2.0;
+            let offset = delta * diff * 0.5;
+            let effect_a = (1.0 / point_a.mass) / ((1.0 / point_a.mass) + (1.0 / point_b.mass));
+            let effect_b = 1.0 - effect_a;
 
-                point_a.position -= offset * effect_a;
-                point_b.position += offset * effect_b;
-            });
-        }
+            point_a.position -= offset * effect_a;
+            point_b.position += offset * effect_b;
+        });
     }
 }
 
