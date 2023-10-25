@@ -8,8 +8,8 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_inspector_egui::{prelude::ReflectInspectorOptions, InspectorOptions};
 use rand::random;
 
-pub const PHYSICS_ITERS: u8 = 4;
-pub const PHYSICS_DT: f32 = 1.0 / 60.0;
+pub const PHYSICS_ITERS: u8 = 100;
+pub const PHYSICS_DT: f32 = 1.0 / 20.0;
 pub const PHYSICS_ITER_DT: f32 = PHYSICS_DT / (PHYSICS_ITERS as f32);
 
 fn main() {
@@ -23,7 +23,7 @@ fn main() {
         .register_type::<Point>()
         .register_type::<Constraint>()
         .add_systems(Startup, (spawn_entities).chain())
-        .add_systems(Update, (apply_velocities, compute_boundaries, compute_constraints, update_positions).chain()
+        .add_systems(Update, (compute_boundaries, compute_constraints, update_positions).chain()
             .run_if(on_timer(Duration::from_millis((1000.0 * PHYSICS_DT) as u64))))
         .add_systems(Update, (debug_points, debug_constraints))
         .run();
@@ -33,15 +33,15 @@ fn main() {
 #[reflect(InspectorOptions)]
 pub struct Point {
     pub position: Vec2,
-    pub velocity: Vec2,
+    pub past_position: Vec2,
     pub friction: f32,
     pub radius: f32,
     pub mass: f32,
 }
 
 impl Point {
-    pub fn future_position(&self) -> Vec2 {
-        self.position + self.velocity
+    pub fn velocity(&self) -> Vec2 {
+        self.position - self.past_position
     }
 }
 
@@ -57,7 +57,7 @@ pub struct Constraint {
 pub fn make_point(position: Vec2) -> impl Bundle {
     Point {
         position,
-        velocity: Vec2::new(random::<f32>() - 0.5, random::<f32>() - 0.5).normalize(),
+        past_position: Vec2::ZERO,
         friction: 1.0,
         radius: 10.0,
         mass: 10.0,
@@ -87,8 +87,6 @@ pub fn spawn_entities(mut commands: Commands) {
     commands.spawn(make_constraint(b, d, 100.0 * 2.0_f32.sqrt()));
     let e = commands.spawn(make_point(Vec2::new(0.0, -100.0))).id();
     commands.spawn(make_constraint(a, e, 100.0));
-
-
 }
 
 macro_rules! constraint_points {
@@ -105,12 +103,6 @@ macro_rules! constraint_points_mut {
     };
 }
 
-pub fn apply_velocities(mut point_query: Query<&mut Point>) {
-    for mut point in point_query.iter_mut() {
-        point.position = point.position + point.velocity;
-    }
-}
-
 pub fn compute_boundaries(
     mut point_query: Query<&mut Point>,
     window_query: Query<&Window, With<PrimaryWindow>>,
@@ -120,7 +112,6 @@ pub fn compute_boundaries(
         for mut point in point_query.iter_mut() {
             let width2 = window.width() / 2.0 - point.radius;
             let height2 = window.height() / 2.0 - point.radius;
-            let r = -1.0;
             let mut pos_effect = point.position;
             let mut bounce_x = false;
             let mut bounce_y = false;
@@ -142,12 +133,6 @@ pub fn compute_boundaries(
             }
             if bounce_x || bounce_y {
                 point.position = pos_effect;
-                if bounce_x {
-                    point.velocity.x *= r;
-                }
-                if bounce_y {
-                    point.velocity.y *= r;
-                }
             }
         }
     }
@@ -160,8 +145,8 @@ pub fn compute_constraints(
     for _ in 0..PHYSICS_ITERS {
         for constraint in constraint_query.iter() {
             constraint_points_mut!(constraint, point_query, point_a, point_b, {
-                let pos_a = point_a.future_position();
-                let pos_b = point_b.future_position();
+                let pos_a = point_a.position;
+                let pos_b = point_b.position;
                 let delta = pos_b - pos_a;
                 let distance = pos_a.distance(pos_b);
                 let diff = (constraint.length - distance) / distance * constraint.strength * 2.0;
@@ -169,8 +154,8 @@ pub fn compute_constraints(
                 let effect_a = (1.0 / point_a.mass) / ((1.0 / point_a.mass) + (1.0 / point_b.mass));
                 let effect_b = 1.0 - effect_a;
 
-                point_a.velocity -= offset * effect_a;
-                point_b.velocity += offset * effect_b;
+                point_a.position -= offset * effect_a;
+                point_b.position += offset * effect_b;
             });
         }
     }
@@ -178,9 +163,9 @@ pub fn compute_constraints(
 
 pub fn update_positions(mut point_query: Query<&mut Point>) {
     for mut point in point_query.iter_mut() {
-        let velocity = point.velocity * point.friction;
+        let velocity = point.velocity() * point.friction;
+        point.past_position = point.position;
         point.position += velocity;
-        point.velocity = velocity;
     }
 }
 
